@@ -51,11 +51,7 @@ public class GlobalParameterService {
                     GlobalParameter::getParameterName,
                     Function.identity(),
                     (existing, duplicate) -> {
-                        log.error(
-                                "Duplicate GLOBAL_PARAMETER [{}] found. Keeping POID={}, discarding POID={}",
-                                existing.getParameterName(),
-                                existing.getParameterPoid(),
-                                duplicate.getParameterPoid()
+                        log.error("Duplicate GLOBAL_PARAMETER [{}] found. Keeping POID={}, discarding POID={}", existing.getParameterName(), existing.getParameterPoid(), duplicate.getParameterPoid()
                         );
                         return existing;
                     }
@@ -85,9 +81,7 @@ public class GlobalParameterService {
 
         boolean isLinux = System.getProperty("os.name").toLowerCase().contains("linux");
 
-        return isLinux && param.getParameterLinuxValue() != null
-                ? param.getParameterLinuxValue()
-                : param.getParameterValue();
+        return isLinux && param.getParameterLinuxValue() != null ? param.getParameterLinuxValue() : param.getParameterValue();
     }
 
     private void checkAndReloadIfExpired() {

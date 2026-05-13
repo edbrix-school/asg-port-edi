@@ -159,10 +159,7 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
         } catch (IOException e) {
             // EMAIL NOTIFICATION: Email attachments not readable
             log.error("Failed to read EDI attachment: {} - Error: {}", attachment.name, e.getMessage(), e);
-            emailNotificationService.sendFileCorruptionNotification(
-                    attachment.name,
-                    "Email attachment not readable: " + e.getMessage(),
-                    null);
+            emailNotificationService.sendFileCorruptionNotification(attachment.name, "Email attachment not readable: " + e.getMessage(), null);
             return null;
         }
     }
@@ -179,22 +176,17 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
             return true;
         }
 
-        VirusScanService.ScanResult scanResult = virusScanService.scanFile(
-                new ByteArrayInputStream(content), attachment.name);
+        VirusScanService.ScanResult scanResult = virusScanService.scanFile(new ByteArrayInputStream(content), attachment.name);
 
         if (!scanResult.clean()) {
             // EMAIL NOTIFICATION: Virus/malware detected
             log.error("Virus/malware detected in file: {} - Threat: {}",
                     attachment.name, scanResult.threatName());
-            emailNotificationService.sendVirusDetectionNotification(
-                    attachment.name,
-                    scanResult.threatName(),
-                    scanResult.details());
+            emailNotificationService.sendVirusDetectionNotification(attachment.name, scanResult.threatName(), scanResult.details());
             return false;
         }
 
-        log.info("Virus scan passed for file: {} (Duration: {}ms)",
-                attachment.name, scanResult.scanDurationMs());
+        log.info("Virus scan passed for file: {} (Duration: {}ms)", attachment.name, scanResult.scanDurationMs());
         return true;
     }
 
@@ -213,8 +205,7 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
             if (!result.isValid()) {
                 // EMAIL NOTIFICATION: Invalid EDI structure or format / Large file size exceeded
                 // Check if it's a file size error specifically
-                boolean isFileSizeError = result.getErrors().stream()
-                        .anyMatch(error -> error.contains("exceeds maximum allowed size") || error.contains("File size"));
+                boolean isFileSizeError = result.getErrors().stream().anyMatch(error -> error.contains("exceeds maximum allowed size") || error.contains("File size"));
 
                 if (isFileSizeError) {
                     // EMAIL NOTIFICATION: Large file size exceeded limit
@@ -224,41 +215,27 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
                     log.error("Invalid EDI structure/format: {} - Errors: {}", attachment.name, result.getErrors());
                 }
 
-                emailNotificationService.sendValidationFailureNotification(
-                        attachment.name,
-                        result.getErrors(),
-                        result.getWarnings(),
-                        result.getChecksum());
+                emailNotificationService.sendValidationFailureNotification(attachment.name, result.getErrors(), result.getWarnings(), result.getChecksum());
 
                 if (!result.getWarnings().isEmpty()) {
-                    log.warn("Validation warnings for {}: {}",
-                            attachment.name, result.getWarnings());
+                    log.warn("Validation warnings for {}: {}", attachment.name, result.getWarnings());
                 }
                 return null;
             }
 
             // Log validation warnings if any
             if (!result.getWarnings().isEmpty()) {
-                log.warn("Validation warnings for {}: {}",
-                        attachment.name, result.getWarnings());
+                log.warn("Validation warnings for {}: {}", attachment.name, result.getWarnings());
             }
 
-            log.info("EDI file validated successfully - Type: {}, Messages: {}, Checksum: {}",
-                    result.getMessageType(),
-                    result.getMessageCount(),
-                    result.getChecksum());
+            log.info("EDI file validated successfully - Type: {}, Messages: {}, Checksum: {}", result.getMessageType(), result.getMessageCount(), result.getChecksum());
 
             return result;
 
         } catch (Exception e) {
             // EMAIL NOTIFICATION: Validation failure (exception during validation)
-            log.error("Exception during validation of file: {} - Error: {}",
-                    attachment.name, e.getMessage(), e);
-            emailNotificationService.sendValidationFailureNotification(
-                    attachment.name,
-                    List.of("Exception during validation: " + e.getMessage()),
-                    List.of(),
-                    null);
+            log.error("Exception during validation of file: {} - Error: {}", attachment.name, e.getMessage(), e);
+            emailNotificationService.sendValidationFailureNotification(attachment.name, List.of("Exception during validation: " + e.getMessage()), List.of(), null);
             return null;
         }
     }
@@ -270,8 +247,7 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
      * @param content          File content
      * @param validationResult Validation result containing checksum
      */
-    private void detectDuplicates(FileAttachment attachment, byte[] content,
-                                  EdiFileValidator.ValidationResult validationResult) {
+    private void detectDuplicates(FileAttachment attachment, byte[] content, EdiFileValidator.ValidationResult validationResult) {
         String fileChecksum = validationResult.getChecksum();
         if (fileChecksum == null) {
             return;
@@ -285,14 +261,12 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
         String duplicateReason = null;
 
         // Check if UNB line already exists in database (CODECO)
-        var existingCodeco = ediUploadCodecoRepository
-                .findByTabTextAndFileLoadName(unbLine, "CODECO");
+        var existingCodeco = ediUploadCodecoRepository.findByTabTextAndFileLoadName(unbLine, "CODECO");
         if (!existingCodeco.isEmpty()) {
             duplicateReason = "Duplicate UNB line found (CODECO)";
         } else {
             // Check for COARRI
-            var existingCoarri = ediUploadCodecoRepository
-                    .findByTabTextAndFileLoadNameForCoarri(unbLine, "COARRI");
+            var existingCoarri = ediUploadCodecoRepository.findByTabTextAndFileLoadNameForCoarri(unbLine, "COARRI");
             if (!existingCoarri.isEmpty()) {
                 duplicateReason = "Duplicate UNB line found (COARRI)";
             }
@@ -324,8 +298,7 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
             return savedPath;
         } catch (Exception e) {
             // EMAIL NOTIFICATION: File save errors
-            log.error("File save error for EDI file: {} - Error: {}",
-                    attachment.name, e.getMessage(), e);
+            log.error("File save error for EDI file: {} - Error: {}", attachment.name, e.getMessage(), e);
             emailNotificationService.sendProcessingFailureNotification(attachment.name, "File save error: " + e.getMessage(), e instanceof Exception ? (Exception) e : new RuntimeException(e));
             return null;
         }
@@ -367,12 +340,10 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
                 }
             }
 
-            log.debug("Max file size from global parameters: {} bytes ({} MB)",
-                    sizeBytes, sizeBytes / (1024 * 1024));
+            log.debug("Max file size from global parameters: {} bytes ({} MB)", sizeBytes, sizeBytes / (1024 * 1024));
             return sizeBytes;
         } catch (NumberFormatException e) {
-            log.warn("Invalid max file size format in global parameter {}: {}. Using default.",
-                    MAX_FILE_SIZE_KEY, maxFileSizeStr, e);
+            log.warn("Invalid max file size format in global parameter {}: {}. Using default.", MAX_FILE_SIZE_KEY, maxFileSizeStr, e);
             return null; // Will use default in validator
         }
     }

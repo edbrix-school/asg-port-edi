@@ -185,14 +185,10 @@ public class OutlookEmailServiceImpl implements OutlookEmailService {
             String requestUrl = String.format("/users/%s/messages/%s/attachments/%s/$value", getUserEmail(), messageId, attachmentId);
 
             // This returns an InputStream directly
-            return graphClient
-                    .customRequest(requestUrl, InputStream.class)
-                    .buildRequest()
-                    .get();
+            return graphClient.customRequest(requestUrl, InputStream.class).buildRequest().get();
 
         } catch (Exception e) {
-            log.error("Error streaming attachment content: {} from message: {}",
-                    attachmentId, messageId, e);
+            log.error("Error streaming attachment content: {} from message: {}", attachmentId, messageId, e);
             throw new RuntimeException("Failed to stream attachment content", e);
         }
     }
@@ -207,11 +203,7 @@ public class OutlookEmailServiceImpl implements OutlookEmailService {
             Message message = new Message();
             message.isRead = true;
 
-            graphClient
-                    .users(getUserEmail())
-                    .messages(messageId)
-                    .buildRequest()
-                    .patch(message);
+            graphClient.users(getUserEmail()).messages(messageId).buildRequest().patch(message);
 
             log.debug("Message marked as read: {}", messageId);
         } catch (Exception e) {

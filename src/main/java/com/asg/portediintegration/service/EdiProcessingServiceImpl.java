@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -33,6 +35,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     private final ShipContainerInventoryRepository containerInventoryRepository;
     private final GlobalDebugLogRecordsRepository debugLogRepository;
     private final GlobalParameterService globalParameterService;
+    private final PlatformTransactionManager transactionManager;
     // TODO: Inject email notification and virus scan services
     // private final EmailNotificationService emailNotificationService;
     // private final VirusScanService virusScanService;
@@ -85,11 +88,21 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             // Step 2: Process EDI files from target folder
             portEdiReadTransfer();
 
-            // Step 3: Insert records into database
-            portEdiInsertRecords();
-
-            // Step 4: Clean up cross trade and shipper own containers
-            cleanupCrossTrade();
+            // Steps 3–4: DB writes only (short transactions). File I/O above must NOT run inside
+            // a transaction — @Modifying queries (insert/cleanup) require an active transaction.
+            TransactionTemplate tx = new TransactionTemplate(transactionManager);
+            tx.executeWithoutResult(status -> portEdiInsertRecords());
+            try {
+                log.info("Cleaning up cross trade and shipper own containers");
+                tx.executeWithoutResult(status -> {
+                    containerInventoryRepository.deleteShipperOwnContainers();
+                    log.info("Deleted shipper own containers from inventory");
+                    containerInventoryRepository.deleteCrossTradeContainers();
+                    log.info("Deleted cross trade containers from inventory");
+                });
+            } catch (Exception e) {
+                log.error("Error cleaning up containers: {}", e.getMessage(), e);
+            }
 
             log.info("EDI file processing batch completed successfully");
         } catch (Exception e) {
@@ -124,8 +137,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 return;
             }
 
-            File[] files = targetDir.listFiles((dir, name) ->
-                    name.toLowerCase().endsWith(".edi") || name.toLowerCase().endsWith(".txt"));
+            File[] files = targetDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".edi") || name.toLowerCase().endsWith(".txt"));
 
             if (files == null || files.length == 0) {
                 log.info("No EDI files found in target folder");
@@ -196,9 +208,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 if (line.startsWith("UNH")) {
                     if (!line.contains("CODECO")) {
                         log.warn("File {} is not a CODECO file", file.getName());
-                        insertDebugLog("port_EDI_CODECO_UPLOAD", "1",
-                                "NOT A CODECO FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(),
-                                "NOT A CODECO FILE-OTHER FILE ", LocalDateTime.now());
+                        insertDebugLog("port_EDI_CODECO_UPLOAD", "1", "NOT A CODECO FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(), "NOT A CODECO FILE-OTHER FILE ", LocalDateTime.now());
                         // EMAIL NOTIFICATION: Validation failure - not a CODECO file
                         // emailNotificationService.sendValidationFailureNotification(
                         //         file.getName(), 
@@ -216,9 +226,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                             .findByTabTextAndFileLoadName(line, "CODECO");
                     if (!existing.isEmpty()) {
                         log.warn("File {} already processed", file.getName());
-                        insertDebugLog("port_EDI_CODECO_UPLOAD", "2",
-                                "ALREADY LOADED CODECO FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(),
-                                "ALREDY LOADED CODECO-CODECO", LocalDateTime.now());
+                        insertDebugLog("port_EDI_CODECO_UPLOAD", "2", "ALREADY LOADED CODECO FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(), "ALREDY LOADED CODECO-CODECO", LocalDateTime.now());
                         return false;
                     }
                     slotNumber++;
@@ -265,18 +273,14 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             // Mark as processed - update only records for this EDI_REF_NO
             uploadCodecoRepository.updateEdiLoadFlagByRefNo(ediRefNo, "CODECO");
 
-            insertDebugLog("port_EDI_CODECO_UPLOAD", "3",
-                    "CODECO FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(),
-                    "SUCESS CODECO-CODECO", LocalDateTime.now());
+            insertDebugLog("port_EDI_CODECO_UPLOAD", "3", "CODECO FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(), "SUCESS CODECO-CODECO", LocalDateTime.now());
 
             log.info("Successfully processed EDI file: {}", file.getName());
             return true;
 
         } catch (IOException e) {
             log.error("Error reading file {}: {}", file.getName(), e.getMessage(), e);
-            insertDebugLog("port_EDI_CODECO_UPLOAD", "4",
-                    "CODECO FILE ~~" + file.getAbsolutePath() + "~" + e.getMessage() + "," + file.getAbsolutePath(),
-                    "NOT SUCESS CODECO-CODECO", LocalDateTime.now());
+            insertDebugLog("port_EDI_CODECO_UPLOAD", "4", "CODECO FILE ~~" + file.getAbsolutePath() + "~" + e.getMessage() + "," + file.getAbsolutePath(), "NOT SUCESS CODECO-CODECO", LocalDateTime.now());
             // EMAIL NOTIFICATION: File corruption/IO error
             // emailNotificationService.sendFileCorruptionNotification(
             //         file.getName(), 
@@ -285,9 +289,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             return false;
         } catch (Exception e) {
             log.error("Error processing file {}: {}", file.getName(), e.getMessage(), e);
-            insertDebugLog("port_EDI_CODECO_UPLOAD", "4",
-                    "CODECO FILE ~~" + file.getAbsolutePath() + "~" + e.getMessage() + "," + file.getAbsolutePath(),
-                    "NOT SUCESS CODECO-CODECO", LocalDateTime.now());
+            insertDebugLog("port_EDI_CODECO_UPLOAD", "4", "CODECO FILE ~~" + file.getAbsolutePath() + "~" + e.getMessage() + "," + file.getAbsolutePath(), "NOT SUCESS CODECO-CODECO", LocalDateTime.now());
             // EMAIL NOTIFICATION: Processing failure
             // emailNotificationService.sendProcessingFailureNotification(
             //         file.getName(), 
@@ -306,8 +308,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
 
         try {
             // Get all EDI lines for this reference, sorted by sequence
-            List<EdiUploadCodeco> allEdiRecords = uploadCodecoRepository
-                    .findByEdiRefNoAndFileLoadName(ediRefNo, "CODECO");
+            List<EdiUploadCodeco> allEdiRecords = uploadCodecoRepository.findByEdiRefNoAndFileLoadName(ediRefNo, "CODECO");
 
             if (allEdiRecords.isEmpty()) {
                 log.warn("No EDI records found for ref: {}", ediRefNo);
@@ -410,39 +411,28 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     /**
      * Create or update gate record based on movement type
      */
-    private EdiContainerGateInOut createOrUpdateGateRecord(String ediRefNo, String containerNo,
-                                                           String gateType, String transactionType, LocalDateTime moveDateTime,
-                                                           String bookingNo, String lineCode, String vessalVoyage, String ediFileDate,
-                                                           Long seqNo, Long mainGroupNo, Long slotNumber, String fileName,
-                                                           List<String> allEdiLines, Long currentSeqNo) {
+    private EdiContainerGateInOut createOrUpdateGateRecord(String ediRefNo, String containerNo, String gateType, String transactionType, LocalDateTime moveDateTime, String bookingNo, String lineCode, String vessalVoyage, String ediFileDate, Long seqNo, Long mainGroupNo, Long slotNumber, String fileName, List<String> allEdiLines, Long currentSeqNo) {
 
         String upperFileName = fileName.toUpperCase();
         EdiContainerGateInOut gateRecord = null;
         boolean needsAdditionalSegments = false;
 
         // Determine movement type and create/update record
-        if ("36".equals(gateType) && transactionType != null &&
-                (transactionType.contains("3+5") ||
-                        ((transactionType.contains("9+5") || transactionType.contains("++5")) &&
-                                "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
+        if ("36".equals(gateType) && transactionType != null && (transactionType.contains("3+5") || ((transactionType.contains("9+5") || transactionType.contains("++5")) && "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
             // Import Gate Out Full
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getImportGateOutFull() == null) {
                 gateRecord.setImportGateOutFull(moveDateTime);
             }
 
-        } else if ("34".equals(gateType) && transactionType != null &&
-                (transactionType.contains("+4") || transactionType.contains("2+4")) &&
-                !transactionType.contains("9+4")) {
+        } else if ("34".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+4")) {
             // Empty Gate In
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getEmptyGateIn() == null) {
                 gateRecord.setEmptyGateIn(moveDateTime);
             }
 
-        } else if ("36".equals(gateType) && transactionType != null &&
-                (transactionType.contains("+4") || transactionType.contains("2+4")) &&
-                !transactionType.contains("9+5")) {
+        } else if ("36".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+5")) {
             // Empty Date Out - needs additional segments
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getEmptyDateOut() == null) {
@@ -450,10 +440,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 needsAdditionalSegments = true;
             }
 
-        } else if ("34".equals(gateType) && transactionType != null &&
-                ("2+5".equals(transactionType) ||
-                        ((transactionType.contains("9+5") || transactionType.contains("++5")) &&
-                                !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
+        } else if ("34".equals(gateType) && transactionType != null && ("2+5".equals(transactionType) || ((transactionType.contains("9+5") || transactionType.contains("++5")) && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
             // Export Date In Full - needs additional segments
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getExportDateInFull() == null) {
@@ -461,17 +448,14 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 needsAdditionalSegments = true;
             }
 
-        } else if (("999".equals(gateType) && transactionType != null && transactionType.contains("+4")) ||
-                ("34".equals(gateType) && transactionType != null && transactionType.contains("9+4"))) {
+        } else if (("999".equals(gateType) && transactionType != null && transactionType.contains("+4")) || ("34".equals(gateType) && transactionType != null && transactionType.contains("9+4"))) {
             // Stripping Import
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getStipingImport() == null) {
                 gateRecord.setStipingImport(moveDateTime);
             }
 
-        } else if (("999".equals(gateType) && transactionType != null && "2+5".equals(transactionType)) ||
-                ("36".equals(gateType) && transactionType != null && transactionType.contains("9+5") &&
-                        !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
+        } else if (("999".equals(gateType) && transactionType != null && "2+5".equals(transactionType)) || ("36".equals(gateType) && transactionType != null && transactionType.contains("9+5") && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
             // Stuffing Export - needs additional segments
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getStuffingExport() == null) {
@@ -507,8 +491,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
 
             if (ediFileDate != null) {
                 try {
-                    gateRecord.setEdiFileDate(LocalDateTime.parse(ediFileDate,
-                            java.time.format.DateTimeFormatter.ofPattern("ddMMyyyyHHmm")));
+                    gateRecord.setEdiFileDate(LocalDateTime.parse(ediFileDate, java.time.format.DateTimeFormatter.ofPattern("ddMMyyyyHHmm")));
                 } catch (Exception e) {
                     gateRecord.setEdiFileDate(LocalDateTime.now());
                 }
@@ -534,11 +517,10 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             return new EdiContainerGateInOut();
         }
 
-        List<EdiContainerGateInOut> existing = gateInOutRepository
-                .findByContainerNoAndLineCode(containerNo, lineCode);
+        List<EdiContainerGateInOut> existing = gateInOutRepository.findByContainerNoAndLineCode(containerNo, lineCode);
 
         if (!existing.isEmpty()) {
-            return existing.get(0);
+            return existing.getFirst();
         }
 
         return new EdiContainerGateInOut();
@@ -641,8 +623,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     private LocalDateTime parseEdiDateTime(String ediDateTime) {
         try {
             if (ediDateTime != null && ediDateTime.length() >= 12) {
-                return LocalDateTime.parse(ediDateTime,
-                        java.time.format.DateTimeFormatter.ofPattern("ddMMyyyyHHmm"));
+                return LocalDateTime.parse(ediDateTime, java.time.format.DateTimeFormatter.ofPattern("ddMMyyyyHHmm"));
             }
         } catch (Exception e) {
             log.warn("Failed to parse EDI date time: {}", ediDateTime);
@@ -689,9 +670,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     private List<String> getEdiLinesForRef(String ediRefNo) {
         return uploadCodecoRepository.findByEdiRefNoAndFileLoadName(ediRefNo, "CODECO")
                 .stream()
-                .sorted(Comparator.comparing(EdiUploadCodeco::getSeqnoFileLine)
-                        .thenComparing(EdiUploadCodeco::getMainGroupNo)
-                        .thenComparing(EdiUploadCodeco::getSlotNumber))
+                .sorted(Comparator.comparing(EdiUploadCodeco::getSeqnoFileLine).thenComparing(EdiUploadCodeco::getMainGroupNo).thenComparing(EdiUploadCodeco::getSlotNumber))
                 .map(EdiUploadCodeco::getTabText)
                 .collect(Collectors.toList());
     }
@@ -719,9 +698,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 if (line.startsWith("UNH")) {
                     if (!line.contains("COARRI")) {
                         log.warn("File {} is not a COARRI file", file.getName());
-                        insertDebugLog("port_EDI_DISCHARGE_LOAD", "1",
-                                "NOT A COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(),
-                                "NOT A CODECO FILE-OTHER FILE ", LocalDateTime.now());
+                        insertDebugLog("port_EDI_DISCHARGE_LOAD", "1", "NOT A COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(), "NOT A CODECO FILE-OTHER FILE ", LocalDateTime.now());
                         return false;
                     }
                     isCoarriFile = true;
@@ -729,13 +706,10 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
 
                 if (line.startsWith("UNB")) {
                     // Check if file already processed
-                    List<EdiUploadCodeco> existing = uploadCodecoRepository
-                            .findByTabTextAndFileLoadNameForCoarri(line, "COARRI");
+                    List<EdiUploadCodeco> existing = uploadCodecoRepository.findByTabTextAndFileLoadNameForCoarri(line, "COARRI");
                     if (!existing.isEmpty()) {
                         log.warn("File {} already processed", file.getName());
-                        insertDebugLog("port_EDI_DISCHARGE_LOAD", "2",
-                                "ALREADY LOADED COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(),
-                                "FAILURE-NO2 ALREDY LOADED COARRI", LocalDateTime.now());
+                        insertDebugLog("port_EDI_DISCHARGE_LOAD", "2", "ALREADY LOADED COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(), "FAILURE-NO2 ALREDY LOADED COARRI", LocalDateTime.now());
                         return false;
                     }
                     slotNumber++;
@@ -757,27 +731,21 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
 
             if (!isCoarriFile) {
                 log.warn("File {} is not a valid COARRI file", file.getName());
-                insertDebugLog("port_EDI_DISCHARGE_LOAD", "3",
-                        "NOT LOADED COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(),
-                        "FAILURE-NO3 NO LOADED/DISCHARGE COARRI-COARRI", LocalDateTime.now());
+                insertDebugLog("port_EDI_DISCHARGE_LOAD", "3", "NOT LOADED COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(), "FAILURE-NO3 NO LOADED/DISCHARGE COARRI-COARRI", LocalDateTime.now());
                 return false;
             }
 
             // Mark as processed - update only records for this EDI_REF_NO
             uploadCodecoRepository.updateEdiLoadFlagByRefNo(ediRefNo, "COARRI");
 
-            insertDebugLog("port_EDI_DISCHARGE_LOAD", "4",
-                    "COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(),
-                    "SUCESSED COARRI", LocalDateTime.now());
+            insertDebugLog("port_EDI_DISCHARGE_LOAD", "4", "COARRI FILE ~~" + file.getAbsolutePath() + "," + file.getAbsolutePath(), "SUCESSED COARRI", LocalDateTime.now());
 
             log.info("Successfully processed COARRI file: {}", file.getName());
             return true;
 
         } catch (Exception e) {
             log.error("Error processing COARRI file {}: {}", file.getName(), e.getMessage(), e);
-            insertDebugLog("port_EDI_DISCHARGE_LOAD", "5",
-                    "COARRI FILE ~~" + file.getAbsolutePath() + "~" + e.getMessage() + "," + file.getAbsolutePath(),
-                    "NOT SUCESS COARRI", LocalDateTime.now());
+            insertDebugLog("port_EDI_DISCHARGE_LOAD", "5", "COARRI FILE ~~" + file.getAbsolutePath() + "~" + e.getMessage() + "," + file.getAbsolutePath(), "NOT SUCESS COARRI", LocalDateTime.now());
             return false;
         }
     }
@@ -792,8 +760,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
 
         // Update container movements for import containers
         // Use native query with MAX() aggregation to match procedure logic
-        List<Object[]> containersForUpdate =
-                gateInOutRepository.findContainersForUpdateNative(fromDate);
+        List<Object[]> containersForUpdate = gateInOutRepository.findContainersForUpdateNative(fromDate);
 
         for (Object[] row : containersForUpdate) {
             // Map Object[] to container data: [CONTAINER_NO, LINECODE, EDI_LOAD_DATE, MAX(IMPORT_GATE_OUT_FULL), MAX(EMPTY_GATE_IN), MAX(STIPING_IMPORT)]
@@ -804,14 +771,12 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             LocalDateTime emptyGateIn = convertToLocalDateTime(row[4]);
             LocalDateTime stipingImport = convertToLocalDateTime(row[5]);
 
-            updateContainerMovements(containerNo, lineCode, ediLoadDate,
-                    importGateOutFull, emptyGateIn, stipingImport);
+            updateContainerMovements(containerNo, lineCode, ediLoadDate, importGateOutFull, emptyGateIn, stipingImport);
         }
 
         // Update MATE records for export containers
         // Use native query with MAX() aggregation to match procedure logic
-        List<Object[]> containersForMate =
-                gateInOutRepository.findContainersForMateUpdateNative(fromDate);
+        List<Object[]> containersForMate = gateInOutRepository.findContainersForMateUpdateNative(fromDate);
 
         for (Object[] row : containersForMate) {
             // Map Object[] to container data: [CONTAINER_NO, LINECODE, EDI_LOAD_DATE, BOOKING_NO, MAX(SEALNO), MAX(GROSS_WEIGHT), MAX(VGM_WEIGHT), MAX(EMPTY_DATE_OUT), MAX(EXPORT_DATE_IN_FULL), MAX(STUFFING_EXPORT)]
@@ -826,8 +791,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             LocalDateTime exportDateInFull = convertToLocalDateTime(row[8]);
             LocalDateTime stuffingExport = convertToLocalDateTime(row[9]);
 
-            updateMateRecords(containerNo, lineCode, ediLoadDate, bookingNo, sealNo,
-                    grossWeight, vgmWeight, emptyDateOut, exportDateInFull, stuffingExport);
+            updateMateRecords(containerNo, lineCode, ediLoadDate, bookingNo, sealNo, grossWeight, vgmWeight, emptyDateOut, exportDateInFull, stuffingExport);
         }
 
         log.info("EDI records insertion completed");
@@ -836,35 +800,23 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     /**
      * Update container movements in manifest tables
      */
-    private void updateContainerMovements(String containerNo, String lineCode, LocalDateTime ediLoadDate,
-                                          LocalDateTime importGateOutFull, LocalDateTime emptyGateIn,
-                                          LocalDateTime stipingImport) {
+    private void updateContainerMovements(String containerNo, String lineCode, LocalDateTime ediLoadDate, LocalDateTime importGateOutFull, LocalDateTime emptyGateIn, LocalDateTime stipingImport) {
         log.debug("Updating container movements for: {}", containerNo);
 
         try {
             // Get line POID from terminal line code
-            List<Long> linePoids = lineMasterRepository
-                    .findLinePoidByTerminalLineCode(lineCode);
+            List<Long> linePoids = lineMasterRepository.findLinePoidByTerminalLineCode(lineCode);
 
             if (linePoids.isEmpty()) {
                 log.warn("No line POID found for line code: {}", lineCode);
                 updateContainerRemarks(containerNo, lineCode, "NOT UPDATED");
-                insertDebugLog("port_EDI_INSERT_RECORDS", "1",
-                        "CODECO FILE ~~FULL OUT/EMPTY IN~~PROBLEM~~" + containerNo +
-                                "~~" + lineCode + "~~FULL OUT/EMPTY IN NOT SUCESSED CODECO",
-                        "FULL OUT/EMPTY IN NOT SUCESSED CODECO", LocalDateTime.now());
+                insertDebugLog("port_EDI_INSERT_RECORDS", "1", "CODECO FILE ~~FULL OUT/EMPTY IN~~PROBLEM~~" + containerNo + "~~" + lineCode + "~~FULL OUT/EMPTY IN NOT SUCESSED CODECO", "FULL OUT/EMPTY IN NOT SUCESSED CODECO", LocalDateTime.now());
                 return;
             }
 
             boolean updated = false;
             for (Long linePoid : linePoids) {
-                int rowsUpdated = manifestContainerDtlRepository.updateManifestContainerDtl(
-                        containerNo,
-                        linePoid,
-                        importGateOutFull,
-                        emptyGateIn,
-                        stipingImport
-                );
+                int rowsUpdated = manifestContainerDtlRepository.updateManifestContainerDtl(containerNo, linePoid, importGateOutFull, emptyGateIn, stipingImport);
 
                 if (rowsUpdated > 0) {
                     updated = true;
@@ -876,14 +828,10 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 updateContainerRemarks(containerNo, lineCode, "UPDATED");
             } else {
                 updateContainerRemarks(containerNo, lineCode, "NOT UPDATED");
-                insertDebugLog("port_EDI_INSERT_RECORDS", "1",
-                        "CODECO FILE ~~FULL OUT/EMPTY IN~~PROBLEM~~" + containerNo +
-                                "~~" + lineCode + "~~FULL OUT/EMPTY IN NOT SUCESSED CODECO",
-                        "FULL OUT/EMPTY IN NOT SUCESSED CODECO", LocalDateTime.now());
+                insertDebugLog("port_EDI_INSERT_RECORDS", "1", "CODECO FILE ~~FULL OUT/EMPTY IN~~PROBLEM~~" + containerNo + "~~" + lineCode + "~~FULL OUT/EMPTY IN NOT SUCESSED CODECO", "FULL OUT/EMPTY IN NOT SUCESSED CODECO", LocalDateTime.now());
             }
         } catch (Exception e) {
-            log.error("Error updating container movements for {}: {}",
-                    containerNo, e.getMessage(), e);
+            log.error("Error updating container movements for {}: {}", containerNo, e.getMessage(), e);
             updateContainerRemarks(containerNo, lineCode, "NOT UPDATED");
         }
     }
@@ -891,10 +839,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     /**
      * Update MATE records for export containers
      */
-    private void updateMateRecords(String containerNo, String lineCode, LocalDateTime ediLoadDate,
-                                   String bookingNo, String sealNo, String grossWeight, String vgmWeight,
-                                   LocalDateTime emptyDateOut, LocalDateTime exportDateInFull,
-                                   LocalDateTime stuffingExport) {
+    private void updateMateRecords(String containerNo, String lineCode, LocalDateTime ediLoadDate, String bookingNo, String sealNo, String grossWeight, String vgmWeight, LocalDateTime emptyDateOut, LocalDateTime exportDateInFull, LocalDateTime stuffingExport) {
         log.debug("Updating MATE records for: {}", containerNo);
 
         String selectFlag = "X";
@@ -906,10 +851,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
 
             if (linePoids.isEmpty()) {
                 log.warn("No line POID found for line code: {}", lineCode);
-                insertDebugLog("port_EDI_INSERT_RECORDS", "2",
-                        "CODECO FILE ~~" + selectFlag + "~~MATE PROBLEM~~FLAG-" + selectFlag +
-                                "---" + containerNo + "~No line POID found",
-                        "MATE NOT SUCESSED CODECO", LocalDateTime.now());
+                insertDebugLog("port_EDI_INSERT_RECORDS", "2", "CODECO FILE ~~" + selectFlag + "~~MATE PROBLEM~~FLAG-" + selectFlag + "---" + containerNo + "~No line POID found", "MATE NOT SUCESSED CODECO", LocalDateTime.now());
                 return;
             }
 
@@ -917,12 +859,10 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 try {
                     selectFlag = "A";
                     // Find transaction POID by booking number and line POID
-                    Long transactionPoid = mateContainerDtlRepository
-                            .findTransactionPoidByBookingNoAndLinePoid(bookingNo, linePoid);
+                    Long transactionPoid = mateContainerDtlRepository.findTransactionPoidByBookingNoAndLinePoid(bookingNo, linePoid);
 
                     if (transactionPoid == null) {
-                        log.warn("No transaction POID found for booking: {} and line: {}",
-                                bookingNo, linePoid);
+                        log.warn("No transaction POID found for booking: {} and line: {}", bookingNo, linePoid);
                         continue;
                     }
 
@@ -932,28 +872,19 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                     Long detRowId = (maxDetRowId != null ? maxDetRowId : 0L) + 1L;
 
                     // Get equipment ISO type
-                    String equipmentIsoType = mateContainerDtlRepository
-                            .findEquipmentIsoTypeByContainerNo(containerNo);
+                    String equipmentIsoType = mateContainerDtlRepository.findEquipmentIsoTypeByContainerNo(containerNo);
 
                     // Handle empty out moves for export
-                    Long oldTransactionPoid = mateContainerDtlRepository
-                            .findTransactionPoidByContainerNo(containerNo);
+                    Long oldTransactionPoid = mateContainerDtlRepository.findTransactionPoidByContainerNo(containerNo);
 
-                    LocalDateTime issueToShipper = mateContainerDtlRepository
-                            .findMaxEmptyDateOut(containerNo, lineCode);
+                    LocalDateTime issueToShipper = mateContainerDtlRepository.findMaxEmptyDateOut(containerNo, lineCode);
 
                     if (oldTransactionPoid != null && oldTransactionPoid != 0) {
-                        String inventoryCheck = mateContainerDtlRepository
-                                .checkContainerInventoryExists(oldTransactionPoid);
+                        String inventoryCheck = mateContainerDtlRepository.checkContainerInventoryExists(oldTransactionPoid);
 
                         if (inventoryCheck == null) {
                             // Update existing MATE container detail
-                            mateContainerDtlRepository.updateMateContainerDtlTransaction(
-                                    containerNo,
-                                    oldTransactionPoid,
-                                    transactionPoid,
-                                    detRowId
-                            );
+                            mateContainerDtlRepository.updateMateContainerDtlTransaction(containerNo, oldTransactionPoid, transactionPoid, detRowId);
                         }
                     }
 
@@ -998,21 +929,14 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                     return; // Success, exit loop
 
                 } catch (Exception e) {
-                    log.error("Error updating MATE record for container {}: {}",
-                            containerNo, e.getMessage(), e);
-                    insertDebugLog("port_EDI_INSERT_RECORDS", "2",
-                            "CODECO FILE ~~" + selectFlag + "~~MATE PROBLEM~~FLAG-" + selectFlag +
-                                    "---" + containerNo + "~" + e.getMessage(),
-                            "MATE NOT SUCESSED CODECO", LocalDateTime.now());
+                    log.error("Error updating MATE record for container {}: {}", containerNo, e.getMessage(), e);
+                    insertDebugLog("port_EDI_INSERT_RECORDS", "2", "CODECO FILE ~~" + selectFlag + "~~MATE PROBLEM~~FLAG-" + selectFlag + "---" + containerNo + "~" + e.getMessage(), "MATE NOT SUCESSED CODECO", LocalDateTime.now());
                 }
             }
         } catch (Exception e) {
             log.error("Error in updateMateRecords for container {}: {}",
                     containerNo, e.getMessage(), e);
-            insertDebugLog("port_EDI_INSERT_RECORDS", "2",
-                    "CODECO FILE ~~" + selectFlag + "~~MATE PROBLEM~~FLAG-" + selectFlag +
-                            "---" + containerNo + "~" + e.getMessage(),
-                    "MATE NOT SUCESSED CODECO", LocalDateTime.now());
+            insertDebugLog("port_EDI_INSERT_RECORDS", "2", "CODECO FILE ~~" + selectFlag + "~~MATE PROBLEM~~FLAG-" + selectFlag + "---" + containerNo + "~" + e.getMessage(), "MATE NOT SUCESSED CODECO", LocalDateTime.now());
         }
     }
 
@@ -1041,9 +965,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             // Fallback to individual update if bulk update fails
             List<EdiContainerGateInOut> containers = gateInOutRepository
                     .findByContainerNoAndLineCode(containerNo, lineCode).stream()
-                    .filter(c -> c.getRemarks() == null &&
-                            (c.getImportGateOutFull() != null || c.getEmptyGateIn() != null ||
-                                    c.getStipingImport() != null))
+                    .filter(c -> c.getRemarks() == null && (c.getImportGateOutFull() != null || c.getEmptyGateIn() != null || c.getStipingImport() != null))
                     .collect(Collectors.toList());
 
             for (EdiContainerGateInOut c : containers) {
@@ -1064,34 +986,13 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             // Fallback to individual update if bulk update fails
             List<EdiContainerGateInOut> containers = gateInOutRepository
                     .findByContainerNoAndLineCode(containerNo, lineCode).stream()
-                    .filter(c -> c.getRemarks() == null &&
-                            c.getBookingNo() != null && !c.getBookingNo().equals("NOT PRESENT"))
+                    .filter(c -> c.getRemarks() == null && c.getBookingNo() != null && !c.getBookingNo().equals("NOT PRESENT"))
                     .collect(Collectors.toList());
 
             for (EdiContainerGateInOut c : containers) {
                 c.setRemarks(remarks);
                 gateInOutRepository.save(c);
             }
-        }
-    }
-
-    /**
-     * Clean up cross trade and shipper own containers
-     */
-    private void cleanupCrossTrade() {
-        log.info("Cleaning up cross trade and shipper own containers");
-
-        try {
-            // Delete shipper own containers
-            containerInventoryRepository.deleteShipperOwnContainers();
-            log.info("Deleted shipper own containers from inventory");
-
-            // Delete cross trade containers
-            containerInventoryRepository.deleteCrossTradeContainers();
-            log.info("Deleted cross trade containers from inventory");
-        } catch (Exception e) {
-            log.error("Error cleaning up containers: {}", e.getMessage(), e);
-            // Don't throw exception, just log the error
         }
     }
 
@@ -1128,11 +1029,9 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     /**
      * Insert debug log record
      */
-    private void insertDebugLog(String procedureName, String debugValue,
-                                String debugRecord, String debugRemarks, LocalDateTime debugDate) {
+    private void insertDebugLog(String procedureName, String debugValue, String debugRecord, String debugRemarks, LocalDateTime debugDate) {
         try {
-            debugLogRepository.insertDebugLog(procedureName, debugValue, debugRecord,
-                    debugRemarks, debugDate);
+            debugLogRepository.insertDebugLog(procedureName, debugValue, debugRecord, debugRemarks, debugDate);
         } catch (Exception e) {
             log.warn("Failed to insert debug log: {}", e.getMessage());
         }

@@ -143,6 +143,4 @@ public class EdiFileServiceImpl implements EdiFileService {
         initializeTargetFolder();
         log.info("Target folder reloaded: {}", this.targetFolder);
     }
-
 }
-

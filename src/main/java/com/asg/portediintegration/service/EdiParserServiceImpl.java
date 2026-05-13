@@ -104,8 +104,7 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Process additional EDI segments (LOC, SEL, MEA, NAD+CZ) for specific movement types
      * This is equivalent to cursor C_EDI_LOC in the procedure
      */
-    public void processAdditionalSegments(EdiContainerGateInOut gateRecord, List<String> ediLines,
-                                          Long currentSeqNo, String fileName) {
+    public void processAdditionalSegments(EdiContainerGateInOut gateRecord, List<String> ediLines, Long currentSeqNo, String fileName) {
         String podest = null;
         String podisch = null;
         String sealNo = "XXX";
@@ -165,46 +164,32 @@ public class EdiParserServiceImpl implements EdiParserService {
     /**
      * Process container movement based on gate type and transaction type
      */
-    private void processMovement(EdiContainerGateInOut gateRecord, String gateType, String transactionType,
-                                 LocalDateTime moveDateTime, String bookingNo, String fileName) {
+    private void processMovement(EdiContainerGateInOut gateRecord, String gateType, String transactionType, LocalDateTime moveDateTime, String bookingNo, String fileName) {
 
         String upperFileName = fileName.toUpperCase();
 
         // Import Gate Out Full: BGM+36 AND (TRNTYP LIKE '3+%5' OR ((TRNTYP LIKE '%9+5' OR TRNTYP LIKE '%++5') AND P_BOOK_NO= 'NOT PRESENT' AND upper(P_FILE_NAME) like '%RCL%'))
-        if ("36".equals(gateType) &&
-                (transactionType != null && (transactionType.contains("3+5") ||
-                        ((transactionType.contains("9+5") || transactionType.contains("++5")) &&
-                                "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))))) {
+        if ("36".equals(gateType) && (transactionType != null && (transactionType.contains("3+5") || ((transactionType.contains("9+5") || transactionType.contains("++5")) && "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))))) {
             gateRecord.setImportGateOutFull(moveDateTime);
 
             // Empty Gate In: BGM+34 AND (TRNTYP LIKE '%+%4' OR TRNTYP LIKE '%2+%4') AND TRNTYP not LIKE '%9+4'
-        } else if ("34".equals(gateType) && transactionType != null &&
-                (transactionType.contains("+4") || transactionType.contains("2+4")) &&
-                !transactionType.contains("9+4")) {
+        } else if ("34".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+4")) {
             gateRecord.setEmptyGateIn(moveDateTime);
 
             // Empty Date Out: BGM+36 AND (TRNTYP LIKE '%+%4' OR TRNTYP LIKE '%2+%4') AND TRNTYP not LIKE '%9+5'
-        } else if ("36".equals(gateType) && transactionType != null &&
-                (transactionType.contains("+4") || transactionType.contains("2+4")) &&
-                !transactionType.contains("9+5")) {
+        } else if ("36".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+5")) {
             gateRecord.setEmptyDateOut(moveDateTime);
 
             // Export Date In Full: BGM+34 AND (TRNTYP LIKE '2+%5' OR ((TRNTYP LIKE '%9+5' OR TRNTYP LIKE '%++5') AND P_BOOK_NO<> 'NOT PRESENT' AND upper(P_FILE_NAME) like '%RCL%'))
-        } else if ("34".equals(gateType) && transactionType != null &&
-                ("2+5".equals(transactionType) ||
-                        ((transactionType.contains("9+5") || transactionType.contains("++5")) &&
-                                !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
+        } else if ("34".equals(gateType) && transactionType != null && ("2+5".equals(transactionType) || ((transactionType.contains("9+5") || transactionType.contains("++5")) && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
             gateRecord.setExportDateInFull(moveDateTime);
 
             // Stripping Import: (BGM+999 AND TRNTYP LIKE '%+%4') OR (BGM+34 AND TRNTYP LIKE '%9+4')
-        } else if (("999".equals(gateType) && transactionType != null && transactionType.contains("+4")) ||
-                ("34".equals(gateType) && transactionType != null && transactionType.contains("9+4"))) {
+        } else if (("999".equals(gateType) && transactionType != null && transactionType.contains("+4")) || ("34".equals(gateType) && transactionType != null && transactionType.contains("9+4"))) {
             gateRecord.setStipingImport(moveDateTime);
 
             // Stuffing Export: (BGM+999 AND TRNTYP LIKE '2+%5') OR (BGM+36 AND TRNTYP LIKE '%9+5' AND P_BOOK_NO<> 'NOT PRESENT' AND upper(P_FILE_NAME) like '%RCL%')
-        } else if (("999".equals(gateType) && transactionType != null && "2+5".equals(transactionType)) ||
-                ("36".equals(gateType) && transactionType != null && transactionType.contains("9+5") &&
-                        !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
+        } else if (("999".equals(gateType) && transactionType != null && "2+5".equals(transactionType)) || ("36".equals(gateType) && transactionType != null && transactionType.contains("9+5") && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
             gateRecord.setStuffingExport(moveDateTime);
         }
     }
@@ -260,9 +245,7 @@ public class EdiParserServiceImpl implements EdiParserService {
     private String extractEdiFileDate() {
         // Format: DDMMRRRRHH24MI
         LocalDateTime now = LocalDateTime.now();
-        return String.format("%02d%02d%04d%02d%02d",
-                now.getDayOfMonth(), now.getMonthValue(), now.getYear(),
-                now.getHour(), now.getMinute());
+        return String.format("%02d%02d%04d%02d%02d", now.getDayOfMonth(), now.getMonthValue(), now.getYear(), now.getHour(), now.getMinute());
     }
 
     /**
