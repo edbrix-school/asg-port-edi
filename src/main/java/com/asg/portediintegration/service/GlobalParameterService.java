@@ -5,6 +5,7 @@ import com.asg.portediintegration.repository.GlobalParameterRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -40,6 +41,9 @@ public class GlobalParameterService {
         try {
             log.info("Loading GLOBAL_PARAMETERS [category={}, group={}]", CATEGORY, GROUP_POID);
             List<GlobalParameter> result = repository.findByCategoryAndGroupPoidAndDeleted(CATEGORY, GROUP_POID, NOT_DELETED);
+            if (result == null) {
+                result = List.of();
+            }
 
             log.info("Repository returned {} rows", result.size());
 
@@ -51,8 +55,7 @@ public class GlobalParameterService {
                     GlobalParameter::getParameterName,
                     Function.identity(),
                     (existing, duplicate) -> {
-                        log.error("Duplicate GLOBAL_PARAMETER [{}] found. Keeping POID={}, discarding POID={}", existing.getParameterName(), existing.getParameterPoid(), duplicate.getParameterPoid()
-                        );
+                        log.error("Duplicate GLOBAL_PARAMETER [{}] found. Keeping POID={}, discarding POID={}", existing.getParameterName(), existing.getParameterPoid(), duplicate.getParameterPoid());
                         return existing;
                     }
             ));
@@ -81,7 +84,7 @@ public class GlobalParameterService {
 
         boolean isLinux = System.getProperty("os.name").toLowerCase().contains("linux");
 
-        return isLinux && param.getParameterLinuxValue() != null ? param.getParameterLinuxValue() : param.getParameterValue();
+        return isLinux && StringUtils.isNotBlank(param.getParameterLinuxValue()) ? param.getParameterLinuxValue() : param.getParameterValue();
     }
 
     private void checkAndReloadIfExpired() {
@@ -97,7 +100,7 @@ public class GlobalParameterService {
 
     public boolean getBoolean(String key, boolean defaultValue) {
         String value = getValue(key);
-        return value != null ? Boolean.parseBoolean(value) : defaultValue;
+        return StringUtils.isBlank(value) ? defaultValue : Boolean.parseBoolean(value.trim());
     }
 
     @Scheduled(fixedRate = 300000) // Refresh every 5 minutes

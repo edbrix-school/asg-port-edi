@@ -62,6 +62,11 @@ public class EdiFileServiceImpl implements EdiFileService {
      * Saves EDI file to target folder
      */
     public Path saveEdiFile(String fileName, InputStream inputStream) throws IOException {
+        if (inputStream == null) {
+            throw new IllegalArgumentException("inputStream must not be null");
+        }
+        String safeName = StringUtils.defaultString(fileName, "unnamed");
+
         // Ensure target folder exists
         Path folderPath = Paths.get(targetFolder);
         if (Files.notExists(folderPath)) {
@@ -71,8 +76,8 @@ public class EdiFileServiceImpl implements EdiFileService {
 
         // Create unique filename
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        String baseName = getBaseFileName(fileName);
-        String extension = getFileExtension(fileName);
+        String baseName = getBaseFileName(safeName);
+        String extension = getFileExtension(safeName);
         String uniqueFileName = String.format("%s_%s%s", baseName, timestamp, extension);
 
         Path targetPath = folderPath.resolve(uniqueFileName);
@@ -120,6 +125,9 @@ public class EdiFileServiceImpl implements EdiFileService {
      * Gets base file name without extension
      */
     private String getBaseFileName(String fileName) {
+        if (StringUtils.isBlank(fileName)) {
+            return "unnamed";
+        }
         int lastDotIndex = fileName.lastIndexOf('.');
         if (lastDotIndex > 0) {
             return fileName.substring(0, lastDotIndex);
@@ -131,6 +139,9 @@ public class EdiFileServiceImpl implements EdiFileService {
      * Gets file extension
      */
     private String getFileExtension(String fileName) {
+        if (StringUtils.isBlank(fileName)) {
+            return "";
+        }
         int lastDotIndex = fileName.lastIndexOf('.');
         if (lastDotIndex > 0 && lastDotIndex < fileName.length() - 1) {
             return fileName.substring(lastDotIndex);

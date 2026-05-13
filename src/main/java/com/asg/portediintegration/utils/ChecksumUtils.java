@@ -21,8 +21,11 @@ public class ChecksumUtils {
      * @throws IOException
      * @throws NoSuchAlgorithmException
      */
-    public static String calculateSHA256(InputStream inputStream, OutputStream outputStream)
-            throws IOException, NoSuchAlgorithmException {
+    public static String calculateSHA256(InputStream inputStream, OutputStream outputStream) throws IOException, NoSuchAlgorithmException {
+
+        if (inputStream == null) {
+            throw new IllegalArgumentException("inputStream must not be null");
+        }
 
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] buffer = new byte[8192];

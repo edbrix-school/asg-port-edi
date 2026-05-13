@@ -145,7 +145,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             }
 
             for (File file : files) {
-                if (file.getName().equals(".working")) {
+                if (".working".equals(file.getName())) {
                     continue;
                 }
 
@@ -390,7 +390,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 // Process DTM+7 segments (movement dates)
                 if (line.startsWith("DTM+7")) {
                     String moveDate = extractMoveDateFromLine(line, fileName);
-                    if (moveDate != null && containerNo != null) {
+                    if (StringUtils.isNotBlank(moveDate) && StringUtils.isNotBlank(containerNo)) {
                         LocalDateTime movementDateTime = parseEdiDateTime(moveDate);
 
                         // Create or update gate record based on gate type and transaction type
@@ -413,26 +413,26 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
      */
     private EdiContainerGateInOut createOrUpdateGateRecord(String ediRefNo, String containerNo, String gateType, String transactionType, LocalDateTime moveDateTime, String bookingNo, String lineCode, String vessalVoyage, String ediFileDate, Long seqNo, Long mainGroupNo, Long slotNumber, String fileName, List<String> allEdiLines, Long currentSeqNo) {
 
-        String upperFileName = fileName.toUpperCase();
+        String upperFileName = StringUtils.upperCase(StringUtils.defaultString(fileName));
         EdiContainerGateInOut gateRecord = null;
         boolean needsAdditionalSegments = false;
 
         // Determine movement type and create/update record
-        if ("36".equals(gateType) && transactionType != null && (transactionType.contains("3+5") || ((transactionType.contains("9+5") || transactionType.contains("++5")) && "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
+        if ("36".equals(gateType) && StringUtils.isNotBlank(transactionType) && (transactionType.contains("3+5") || ((transactionType.contains("9+5") || transactionType.contains("++5")) && "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
             // Import Gate Out Full
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getImportGateOutFull() == null) {
                 gateRecord.setImportGateOutFull(moveDateTime);
             }
 
-        } else if ("34".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+4")) {
+        } else if ("34".equals(gateType) && StringUtils.isNotBlank(transactionType) && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+4")) {
             // Empty Gate In
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getEmptyGateIn() == null) {
                 gateRecord.setEmptyGateIn(moveDateTime);
             }
 
-        } else if ("36".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+5")) {
+        } else if ("36".equals(gateType) && StringUtils.isNotBlank(transactionType) && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+5")) {
             // Empty Date Out - needs additional segments
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getEmptyDateOut() == null) {
@@ -440,7 +440,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 needsAdditionalSegments = true;
             }
 
-        } else if ("34".equals(gateType) && transactionType != null && ("2+5".equals(transactionType) || ((transactionType.contains("9+5") || transactionType.contains("++5")) && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
+        } else if ("34".equals(gateType) && StringUtils.isNotBlank(transactionType) && ("2+5".equals(transactionType) || ((transactionType.contains("9+5") || transactionType.contains("++5")) && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
             // Export Date In Full - needs additional segments
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getExportDateInFull() == null) {
@@ -448,14 +448,14 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                 needsAdditionalSegments = true;
             }
 
-        } else if (("999".equals(gateType) && transactionType != null && transactionType.contains("+4")) || ("34".equals(gateType) && transactionType != null && transactionType.contains("9+4"))) {
+        } else if (("999".equals(gateType) && StringUtils.isNotBlank(transactionType) && transactionType.contains("+4")) || ("34".equals(gateType) && StringUtils.isNotBlank(transactionType) && transactionType.contains("9+4"))) {
             // Stripping Import
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getStipingImport() == null) {
                 gateRecord.setStipingImport(moveDateTime);
             }
 
-        } else if (("999".equals(gateType) && transactionType != null && "2+5".equals(transactionType)) || ("36".equals(gateType) && transactionType != null && transactionType.contains("9+5") && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
+        } else if (("999".equals(gateType) && StringUtils.isNotBlank(transactionType) && "2+5".equals(transactionType)) || ("36".equals(gateType) && StringUtils.isNotBlank(transactionType) && transactionType.contains("9+5") && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
             // Stuffing Export - needs additional segments
             gateRecord = findOrCreateGateRecord(containerNo, lineCode);
             if (gateRecord.getStuffingExport() == null) {
@@ -469,12 +469,12 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             if (gateRecord.getEdiRefNo() == null) {
                 // Convert String ediRefNo to Long for EdiContainerGateInOut (if column is NUMBER)
                 try {
-                    gateRecord.setEdiRefNo(Long.parseLong(ediRefNo));
+                    gateRecord.setEdiRefNo(Long.parseLong(StringUtils.trimToEmpty(ediRefNo)));
                 } catch (NumberFormatException e) {
                     log.warn("Could not parse ediRefNo as Long: {}", ediRefNo);
                     // If conversion fails, try to extract numeric part or use 0
-                    String numericPart = ediRefNo.replaceAll("[^0-9]", "");
-                    if (!numericPart.isEmpty()) {
+                    String numericPart = StringUtils.defaultString(ediRefNo).replaceAll("[^0-9]", "");
+                    if (StringUtils.isNotBlank(numericPart)) {
                         gateRecord.setEdiRefNo(Long.parseLong(numericPart));
                     }
                 }
@@ -489,7 +489,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             gateRecord.setMainGroupNo(mainGroupNo);
             gateRecord.setSlotNumber(slotNumber);
 
-            if (ediFileDate != null) {
+            if (StringUtils.isNotBlank(ediFileDate)) {
                 try {
                     gateRecord.setEdiFileDate(LocalDateTime.parse(ediFileDate, java.time.format.DateTimeFormatter.ofPattern("ddMMyyyyHHmm")));
                 } catch (Exception e) {
@@ -513,7 +513,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
      * Find existing gate record or create new one
      */
     private EdiContainerGateInOut findOrCreateGateRecord(String containerNo, String lineCode) {
-        if (containerNo == null || lineCode == null) {
+        if (StringUtils.isAnyBlank(containerNo, lineCode)) {
             return new EdiContainerGateInOut();
         }
 
@@ -530,6 +530,9 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
      * Helper methods to extract values from EDI lines
      */
     private String extractContainerNoFromLine(String line) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             int firstPlus = line.indexOf('+', 4);
             if (firstPlus > 0) {
@@ -550,6 +553,9 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     }
 
     private String extractBookingNoFromLine(String line) {
+        if (StringUtils.isBlank(line)) {
+            return "NOT PRESENT";
+        }
         try {
             String value = line.substring(7).replace("'", "");
             if (value.contains(":")) {
@@ -568,6 +574,9 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     }
 
     private String extractLineCodeFromLine(String line) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             int firstPlus = line.indexOf('+', 4);
             if (firstPlus > 0) {
@@ -588,6 +597,9 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
     }
 
     private String extractMoveDateFromLine(String line, String fileName) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             String dateStr = line.substring(6);
             int colonIndex = dateStr.indexOf(':', 1);
@@ -622,7 +634,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
 
     private LocalDateTime parseEdiDateTime(String ediDateTime) {
         try {
-            if (ediDateTime != null && ediDateTime.length() >= 12) {
+            if (StringUtils.isNotBlank(ediDateTime) && ediDateTime.length() >= 12) {
                 return LocalDateTime.parse(ediDateTime, java.time.format.DateTimeFormatter.ofPattern("ddMMyyyyHHmm"));
             }
         } catch (Exception e) {
@@ -653,7 +665,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
         if (newRecord.getStuffingExport() != null && existing.getStuffingExport() == null) {
             existing.setStuffingExport(newRecord.getStuffingExport());
         }
-        if (newRecord.getSealNo() != null && (existing.getSealNo() == null || "XXX".equals(existing.getSealNo()))) {
+        if (StringUtils.isNotBlank(newRecord.getSealNo()) && (existing.getSealNo() == null || "XXX".equals(existing.getSealNo()))) {
             existing.setSealNo(newRecord.getSealNo());
         }
         if (newRecord.getGrossWeight() != null) {
@@ -784,9 +796,9 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             String lineCode = (String) row[1];
             LocalDateTime ediLoadDate = convertToLocalDateTime(row[2]);
             String bookingNo = (String) row[3];
-            String sealNo = row[4] != null ? (String) row[4] : "0";
-            String grossWeight = row[5] != null ? (String) row[5] : "0";
-            String vgmWeight = row[6] != null ? (String) row[6] : "0";
+            String sealNo = StringUtils.defaultIfBlank((String) row[4], "0");
+            String grossWeight = StringUtils.defaultIfBlank((String) row[5], "0");
+            String vgmWeight = StringUtils.defaultIfBlank((String) row[6], "0");
             LocalDateTime emptyDateOut = convertToLocalDateTime(row[7]);
             LocalDateTime exportDateInFull = convertToLocalDateTime(row[8]);
             LocalDateTime stuffingExport = convertToLocalDateTime(row[9]);
@@ -889,9 +901,9 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
                     }
 
                     // Weight values are already extracted in the native query (after colon)
-                    String processedGrossWeight = grossWeight != null ? grossWeight : "0";
-                    String processedVgmWeight = vgmWeight != null ? vgmWeight : "0";
-                    String processedSealNo = sealNo != null ? sealNo : "0";
+                    String processedGrossWeight = StringUtils.defaultIfBlank(grossWeight, "0");
+                    String processedVgmWeight = StringUtils.defaultIfBlank(vgmWeight, "0");
+                    String processedSealNo = StringUtils.defaultIfBlank(sealNo, "0");
 
                     // Try to update existing record
                     selectFlag = "C";
@@ -944,7 +956,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
      * Extract weight value from EDI format (e.g., "MEA+AAE+G+:25000" -> "25000")
      */
     private String extractWeightValue(String weightStr) {
-        if (weightStr == null || weightStr.isEmpty()) {
+        if (StringUtils.isBlank(weightStr)) {
             return "0";
         }
         int colonIndex = weightStr.indexOf(':');
@@ -986,7 +998,7 @@ public class EdiProcessingServiceImpl implements EdiProcessingService {
             // Fallback to individual update if bulk update fails
             List<EdiContainerGateInOut> containers = gateInOutRepository
                     .findByContainerNoAndLineCode(containerNo, lineCode).stream()
-                    .filter(c -> c.getRemarks() == null && c.getBookingNo() != null && !c.getBookingNo().equals("NOT PRESENT"))
+                    .filter(c -> c.getRemarks() == null && StringUtils.isNotBlank(c.getBookingNo()) && !"NOT PRESENT".equals(c.getBookingNo()))
                     .collect(Collectors.toList());
 
             for (EdiContainerGateInOut c : containers) {

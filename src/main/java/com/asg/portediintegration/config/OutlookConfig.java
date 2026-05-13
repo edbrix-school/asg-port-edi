@@ -65,7 +65,7 @@ public class OutlookConfig {
         } else {
             scopes = Arrays.stream(scopesStr.split(","))
                     .map(String::trim)
-                    .filter(s -> !s.isEmpty())
+                    .filter(StringUtils::isNotBlank)
                     .collect(Collectors.toList());
         }
         final TokenCredentialAuthProvider authProvider = new TokenCredentialAuthProvider(scopes, tokenCredential);

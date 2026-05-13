@@ -138,7 +138,7 @@ public class GlobalExceptionHandler {
         Map<String, Object> errors = new HashMap<>();
         if (ex.getFieldErrors() != null && !ex.getFieldErrors().isEmpty()) {
             ex.getFieldErrors().forEach(error ->
-                    errors.put(error.getField() != null ? error.getField() : "general", error.getMessage())
+                    errors.put(StringUtils.defaultIfBlank(error.getField(), "general"), error.getMessage())
             );
             return ApiResponse.error(ex.getMessage(), HttpStatus.BAD_REQUEST.value(), errors);
         }

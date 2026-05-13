@@ -1,12 +1,12 @@
 package com.asg.portediintegration.service;
 
-import com.asg.common.lib.client.ParameterServiceClient;
 import com.asg.portediintegration.repository.EdiUploadCodecoRepository;
 import com.asg.portediintegration.utils.EdiFileValidator;
 import com.microsoft.graph.models.FileAttachment;
 import com.microsoft.graph.models.Message;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
@@ -60,6 +60,9 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
 
         try {
             List<Message> messages = messageFetcher.get();
+            if (messages == null) {
+                messages = List.of();
+            }
 
             log.info("Starting EDI file processing from fetched {} file(s)", messages.size());
 
@@ -107,8 +110,12 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
      * @return Optional containing the saved file path if successful, empty otherwise
      */
     private Optional<Path> processEdiAttachment(Message message, FileAttachment ediAttachment) {
+        if (message == null || ediAttachment == null || StringUtils.isAnyBlank(message.id, ediAttachment.id)) {
+            log.warn("Cannot process EDI attachment: missing message, attachment, or ids");
+            return Optional.empty();
+        }
         try (InputStream attachmentStream = outlookEmailService.getAttachmentStream(message.id, ediAttachment.id)) {
-            log.info("Processing EDI attachment: {}", ediAttachment.name);
+            log.info("Processing EDI attachment: {}", StringUtils.defaultString(ediAttachment.name));
 
             byte[] fileContent = readAttachmentContent(ediAttachment, attachmentStream);
             if (fileContent == null) {
@@ -135,8 +142,8 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
             return Optional.of(savedPath);
 
         } catch (Exception e) {
-            log.error("Error processing EDI attachment: {} from message: {}", ediAttachment.name, message.id, e);
-            emailNotificationService.sendProcessingFailureNotification(ediAttachment.name, "Processing error: " + e.getMessage(), e);
+            log.error("Error processing EDI attachment: {} from message: {}", StringUtils.defaultString(ediAttachment.name), message.id, e);
+            emailNotificationService.sendProcessingFailureNotification(StringUtils.defaultString(ediAttachment.name), "Processing error: " + e.getMessage(), e);
             return Optional.empty();
         }
     }
@@ -149,6 +156,9 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
      * @return File content as byte array, or null if reading fails
      */
     private byte[] readAttachmentContent(FileAttachment attachment, InputStream inputStream) {
+        if (attachment == null || inputStream == null) {
+            return null;
+        }
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int bytesRead;
@@ -158,8 +168,8 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
             return baos.toByteArray();
         } catch (IOException e) {
             // EMAIL NOTIFICATION: Email attachments not readable
-            log.error("Failed to read EDI attachment: {} - Error: {}", attachment.name, e.getMessage(), e);
-            emailNotificationService.sendFileCorruptionNotification(attachment.name, "Email attachment not readable: " + e.getMessage(), null);
+            log.error("Failed to read EDI attachment: {} - Error: {}", StringUtils.defaultString(attachment.name), e.getMessage(), e);
+            emailNotificationService.sendFileCorruptionNotification(StringUtils.defaultString(attachment.name), "Email attachment not readable: " + e.getMessage(), null);
             return null;
         }
     }
@@ -176,17 +186,16 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
             return true;
         }
 
-        VirusScanService.ScanResult scanResult = virusScanService.scanFile(new ByteArrayInputStream(content), attachment.name);
+        VirusScanService.ScanResult scanResult = virusScanService.scanFile(new ByteArrayInputStream(content), StringUtils.defaultString(attachment.name));
 
         if (!scanResult.clean()) {
             // EMAIL NOTIFICATION: Virus/malware detected
-            log.error("Virus/malware detected in file: {} - Threat: {}",
-                    attachment.name, scanResult.threatName());
-            emailNotificationService.sendVirusDetectionNotification(attachment.name, scanResult.threatName(), scanResult.details());
+            log.error("Virus/malware detected in file: {} - Threat: {}", StringUtils.defaultString(attachment.name), scanResult.threatName());
+            emailNotificationService.sendVirusDetectionNotification(StringUtils.defaultString(attachment.name), scanResult.threatName(), scanResult.details());
             return false;
         }
 
-        log.info("Virus scan passed for file: {} (Duration: {}ms)", attachment.name, scanResult.scanDurationMs());
+        log.info("Virus scan passed for file: {} (Duration: {}ms)", StringUtils.defaultString(attachment.name), scanResult.scanDurationMs());
         return true;
     }
 
@@ -200,7 +209,7 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
     private EdiFileValidator.ValidationResult validateEdiFile(FileAttachment attachment, byte[] content) {
         try {
             Long maxFileSizeBytes = getMaxFileSizeBytes();
-            EdiFileValidator.ValidationResult result = EdiFileValidator.validateEdiFile(new ByteArrayInputStream(content), attachment.name, maxFileSizeBytes);
+            EdiFileValidator.ValidationResult result = EdiFileValidator.validateEdiFile(new ByteArrayInputStream(content), StringUtils.defaultString(attachment.name), maxFileSizeBytes);
 
             if (!result.isValid()) {
                 // EMAIL NOTIFICATION: Invalid EDI structure or format / Large file size exceeded
@@ -209,23 +218,23 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
 
                 if (isFileSizeError) {
                     // EMAIL NOTIFICATION: Large file size exceeded limit
-                    log.error("File size exceeded limit: {} - Errors: {}", attachment.name, result.getErrors());
+                    log.error("File size exceeded limit: {} - Errors: {}", StringUtils.defaultString(attachment.name), result.getErrors());
                 } else {
                     // EMAIL NOTIFICATION: Invalid EDI structure or format
-                    log.error("Invalid EDI structure/format: {} - Errors: {}", attachment.name, result.getErrors());
+                    log.error("Invalid EDI structure/format: {} - Errors: {}", StringUtils.defaultString(attachment.name), result.getErrors());
                 }
 
-                emailNotificationService.sendValidationFailureNotification(attachment.name, result.getErrors(), result.getWarnings(), result.getChecksum());
+                emailNotificationService.sendValidationFailureNotification(StringUtils.defaultString(attachment.name), result.getErrors(), result.getWarnings(), result.getChecksum());
 
                 if (!result.getWarnings().isEmpty()) {
-                    log.warn("Validation warnings for {}: {}", attachment.name, result.getWarnings());
+                    log.warn("Validation warnings for {}: {}", StringUtils.defaultString(attachment.name), result.getWarnings());
                 }
                 return null;
             }
 
             // Log validation warnings if any
             if (!result.getWarnings().isEmpty()) {
-                log.warn("Validation warnings for {}: {}", attachment.name, result.getWarnings());
+                log.warn("Validation warnings for {}: {}", StringUtils.defaultString(attachment.name), result.getWarnings());
             }
 
             log.info("EDI file validated successfully - Type: {}, Messages: {}, Checksum: {}", result.getMessageType(), result.getMessageCount(), result.getChecksum());
@@ -234,8 +243,8 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
 
         } catch (Exception e) {
             // EMAIL NOTIFICATION: Validation failure (exception during validation)
-            log.error("Exception during validation of file: {} - Error: {}", attachment.name, e.getMessage(), e);
-            emailNotificationService.sendValidationFailureNotification(attachment.name, List.of("Exception during validation: " + e.getMessage()), List.of(), null);
+            log.error("Exception during validation of file: {} - Error: {}", StringUtils.defaultString(attachment.name), e.getMessage(), e);
+            emailNotificationService.sendValidationFailureNotification(StringUtils.defaultString(attachment.name), List.of("Exception during validation: " + e.getMessage()), List.of(), null);
             return null;
         }
     }
@@ -249,12 +258,12 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
      */
     private void detectDuplicates(FileAttachment attachment, byte[] content, EdiFileValidator.ValidationResult validationResult) {
         String fileChecksum = validationResult.getChecksum();
-        if (fileChecksum == null) {
+        if (StringUtils.isBlank(fileChecksum)) {
             return;
         }
 
         String unbLine = extractUnbLineFromContent(content);
-        if (unbLine == null) {
+        if (StringUtils.isBlank(unbLine)) {
             return;
         }
 
@@ -277,10 +286,10 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
         //     duplicateReason = "Duplicate checksum found";
         // }
 
-        if (duplicateReason != null) {
+        if (StringUtils.isNotBlank(duplicateReason)) {
             // EMAIL NOTIFICATION: Failed checksum / duplicate detection
-            log.warn("Duplicate file detected: {} - Reason: {}, Checksum: {}", attachment.name, duplicateReason, fileChecksum);
-            emailNotificationService.sendDuplicateFileNotification(attachment.name, fileChecksum, duplicateReason);
+            log.warn("Duplicate file detected: {} - Reason: {}, Checksum: {}", StringUtils.defaultString(attachment.name), duplicateReason, fileChecksum);
+            emailNotificationService.sendDuplicateFileNotification(StringUtils.defaultString(attachment.name), fileChecksum, duplicateReason);
             // Note: Duplicates are allowed, so we continue processing
         }
     }
@@ -294,12 +303,12 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
      */
     private Path saveEdiFile(FileAttachment attachment, byte[] content) {
         try {
-            Path savedPath = ediFileService.saveEdiFile(attachment.name, new ByteArrayInputStream(content));
+            Path savedPath = ediFileService.saveEdiFile(StringUtils.defaultString(attachment.name), new ByteArrayInputStream(content));
             return savedPath;
         } catch (Exception e) {
             // EMAIL NOTIFICATION: File save errors
-            log.error("File save error for EDI file: {} - Error: {}", attachment.name, e.getMessage(), e);
-            emailNotificationService.sendProcessingFailureNotification(attachment.name, "File save error: " + e.getMessage(), e instanceof Exception ? (Exception) e : new RuntimeException(e));
+            log.error("File save error for EDI file: {} - Error: {}", StringUtils.defaultString(attachment.name), e.getMessage(), e);
+            emailNotificationService.sendProcessingFailureNotification(StringUtils.defaultString(attachment.name), "File save error: " + e.getMessage(), e instanceof Exception ? (Exception) e : new RuntimeException(e));
             return null;
         }
     }
@@ -310,7 +319,7 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
      */
     private Long getMaxFileSizeBytes() {
         String maxFileSizeStr = globalParameterService.getValue(MAX_FILE_SIZE_KEY);
-        if (maxFileSizeStr == null || maxFileSizeStr.trim().isEmpty()) {
+        if (StringUtils.isBlank(maxFileSizeStr)) {
             log.debug("Max file size not configured in global parameters, using default");
             return null; // Will use default in validator
         }
@@ -352,12 +361,16 @@ public class EdiFileProcessorServiceImpl implements EdiFileProcessorService {
      * Extract UNB line from file content for duplicate detection
      */
     private String extractUnbLineFromContent(byte[] fileContent) {
+        if (fileContent == null || fileContent.length == 0) {
+            return null;
+        }
         try {
             String content = new String(fileContent, StandardCharsets.ISO_8859_1);
             String[] lines = content.split("\r?\n");
             for (String line : lines) {
-                if (line.trim().startsWith("UNB")) {
-                    return line.trim();
+                String trimmed = StringUtils.trimToEmpty(line);
+                if (trimmed.startsWith("UNB")) {
+                    return trimmed;
                 }
             }
         } catch (Exception e) {

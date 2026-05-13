@@ -53,8 +53,7 @@ public class OutlookEmailServiceImpl implements OutlookEmailService {
                     .get();
 
             List<Message> messageList = new ArrayList<>();
-            if (messages != null) {
-                messages.getCurrentPage();
+            if (messages != null && messages.getCurrentPage() != null) {
                 messageList.addAll(messages.getCurrentPage());
             }
 
@@ -216,8 +215,15 @@ public class OutlookEmailServiceImpl implements OutlookEmailService {
      * Filters EDI file attachments (files with .edi extension)
      */
     public List<FileAttachment> filterEdiAttachments(List<FileAttachment> attachments) {
+        if (attachments == null) {
+            return List.of();
+        }
         return attachments.stream()
-                .filter(att -> att.name != null && (att.name.toLowerCase().endsWith(".edi") || att.name.toLowerCase().endsWith(".edifact") || att.name.toLowerCase().endsWith(".x12")))
+                .filter(att -> att != null && StringUtils.isNotBlank(att.name))
+                .filter(att -> {
+                    String n = att.name.toLowerCase();
+                    return n.endsWith(".edi") || n.endsWith(".edifact") || n.endsWith(".x12");
+                })
                 .collect(Collectors.toList());
     }
 }

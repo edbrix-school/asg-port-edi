@@ -2,6 +2,7 @@ package com.asg.portediintegration.service;
 
 import com.asg.portediintegration.entity.EdiContainerGateInOut;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -24,16 +25,21 @@ public class EdiParserServiceImpl implements EdiParserService {
         gateRecord.setCreatedDate(LocalDateTime.now());
         // Convert String ediRefNo to Long for EdiContainerGateInOut (if column is NUMBER)
         try {
-            gateRecord.setEdiRefNo(Long.parseLong(ediRefNo));
+            gateRecord.setEdiRefNo(Long.parseLong(StringUtils.trimToEmpty(ediRefNo)));
         } catch (NumberFormatException e) {
             log.warn("Could not parse ediRefNo as Long: {}", ediRefNo);
             // If conversion fails, try to extract numeric part or use 0
-            String numericPart = ediRefNo.replaceAll("[^0-9]", "");
-            if (!numericPart.isEmpty()) {
+            String numericPart = StringUtils.defaultString(ediRefNo).replaceAll("[^0-9]", "");
+            if (StringUtils.isNotBlank(numericPart)) {
                 gateRecord.setEdiRefNo(Long.parseLong(numericPart));
             } else {
                 gateRecord.setEdiRefNo(0L);
             }
+        }
+
+        if (ediLines == null) {
+            log.warn("parseCodecoMessage called with null ediLines");
+            return gateRecord;
         }
 
         String gateType = null;
@@ -45,7 +51,8 @@ public class EdiParserServiceImpl implements EdiParserService {
         String ediFileDate = null;
         String vessalVoyage = null;
 
-        for (String line : ediLines) {
+        for (String raw : ediLines) {
+            String line = StringUtils.defaultString(raw);
             if (line.startsWith("UNB")) {
                 // Extract EDI file date - format: DDMMRRRRHH24MI
                 ediFileDate = extractEdiFileDate();
@@ -80,7 +87,7 @@ public class EdiParserServiceImpl implements EdiParserService {
         gateRecord.setBookingNo(bookingNo);
         gateRecord.setVessalVoyage(vessalVoyage);
 
-        if (ediFileDate != null) {
+        if (StringUtils.isNotBlank(ediFileDate)) {
             try {
                 gateRecord.setEdiFileDate(LocalDateTime.parse(ediFileDate, EDI_DATE_FORMAT));
             } catch (Exception e) {
@@ -92,7 +99,7 @@ public class EdiParserServiceImpl implements EdiParserService {
         }
 
         // Process movement based on gate type and transaction type
-        if (moveDate != null && containerNo != null) {
+        if (StringUtils.isNotBlank(moveDate) && StringUtils.isNotBlank(containerNo)) {
             LocalDateTime movementDateTime = parseEdiDateTime(moveDate);
             processMovement(gateRecord, gateType, transactionType, movementDateTime, bookingNo, fileName);
         }
@@ -105,6 +112,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * This is equivalent to cursor C_EDI_LOC in the procedure
      */
     public void processAdditionalSegments(EdiContainerGateInOut gateRecord, List<String> ediLines, Long currentSeqNo, String fileName) {
+        if (gateRecord == null || ediLines == null) {
+            return;
+        }
         String podest = null;
         String podisch = null;
         String sealNo = "XXX";
@@ -113,7 +123,8 @@ public class EdiParserServiceImpl implements EdiParserService {
         String title = null;
 
         // Process lines after current sequence number until next BGM
-        for (String line : ediLines) {
+        for (String raw : ediLines) {
+            String line = StringUtils.defaultString(raw);
             if (line.startsWith("BGM")) {
                 // Stop processing when we hit next BGM segment
                 break;
@@ -141,22 +152,22 @@ public class EdiParserServiceImpl implements EdiParserService {
         }
 
         // Set additional fields
-        if (podest != null) {
+        if (StringUtils.isNotBlank(podest)) {
             gateRecord.setPodest(podest);
         }
-        if (podisch != null) {
+        if (StringUtils.isNotBlank(podisch)) {
             gateRecord.setPodisch(podisch);
         }
-        if (sealNo != null && !"XXX".equals(sealNo)) {
+        if (StringUtils.isNotBlank(sealNo) && !"XXX".equals(sealNo)) {
             gateRecord.setSealNo(sealNo);
         }
-        if (grossWeight != null) {
+        if (StringUtils.isNotBlank(grossWeight)) {
             gateRecord.setGrossWeight(grossWeight);
         }
-        if (vgmWeight != null) {
+        if (StringUtils.isNotBlank(vgmWeight)) {
             gateRecord.setVgmWeight(vgmWeight);
         }
-        if (title != null) {
+        if (StringUtils.isNotBlank(title)) {
             gateRecord.setTitle(title);
         }
     }
@@ -166,30 +177,30 @@ public class EdiParserServiceImpl implements EdiParserService {
      */
     private void processMovement(EdiContainerGateInOut gateRecord, String gateType, String transactionType, LocalDateTime moveDateTime, String bookingNo, String fileName) {
 
-        String upperFileName = fileName.toUpperCase();
+        String upperFileName = StringUtils.upperCase(StringUtils.defaultString(fileName));
 
         // Import Gate Out Full: BGM+36 AND (TRNTYP LIKE '3+%5' OR ((TRNTYP LIKE '%9+5' OR TRNTYP LIKE '%++5') AND P_BOOK_NO= 'NOT PRESENT' AND upper(P_FILE_NAME) like '%RCL%'))
-        if ("36".equals(gateType) && (transactionType != null && (transactionType.contains("3+5") || ((transactionType.contains("9+5") || transactionType.contains("++5")) && "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))))) {
+        if ("36".equals(gateType) && (StringUtils.isNotBlank(transactionType) && (transactionType.contains("3+5") || ((transactionType.contains("9+5") || transactionType.contains("++5")) && "NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))))) {
             gateRecord.setImportGateOutFull(moveDateTime);
 
             // Empty Gate In: BGM+34 AND (TRNTYP LIKE '%+%4' OR TRNTYP LIKE '%2+%4') AND TRNTYP not LIKE '%9+4'
-        } else if ("34".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+4")) {
+        } else if ("34".equals(gateType) && StringUtils.isNotBlank(transactionType) && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+4")) {
             gateRecord.setEmptyGateIn(moveDateTime);
 
             // Empty Date Out: BGM+36 AND (TRNTYP LIKE '%+%4' OR TRNTYP LIKE '%2+%4') AND TRNTYP not LIKE '%9+5'
-        } else if ("36".equals(gateType) && transactionType != null && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+5")) {
+        } else if ("36".equals(gateType) && StringUtils.isNotBlank(transactionType) && (transactionType.contains("+4") || transactionType.contains("2+4")) && !transactionType.contains("9+5")) {
             gateRecord.setEmptyDateOut(moveDateTime);
 
             // Export Date In Full: BGM+34 AND (TRNTYP LIKE '2+%5' OR ((TRNTYP LIKE '%9+5' OR TRNTYP LIKE '%++5') AND P_BOOK_NO<> 'NOT PRESENT' AND upper(P_FILE_NAME) like '%RCL%'))
-        } else if ("34".equals(gateType) && transactionType != null && ("2+5".equals(transactionType) || ((transactionType.contains("9+5") || transactionType.contains("++5")) && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
+        } else if ("34".equals(gateType) && StringUtils.isNotBlank(transactionType) && ("2+5".equals(transactionType) || ((transactionType.contains("9+5") || transactionType.contains("++5")) && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL")))) {
             gateRecord.setExportDateInFull(moveDateTime);
 
             // Stripping Import: (BGM+999 AND TRNTYP LIKE '%+%4') OR (BGM+34 AND TRNTYP LIKE '%9+4')
-        } else if (("999".equals(gateType) && transactionType != null && transactionType.contains("+4")) || ("34".equals(gateType) && transactionType != null && transactionType.contains("9+4"))) {
+        } else if (("999".equals(gateType) && StringUtils.isNotBlank(transactionType) && transactionType.contains("+4")) || ("34".equals(gateType) && StringUtils.isNotBlank(transactionType) && transactionType.contains("9+4"))) {
             gateRecord.setStipingImport(moveDateTime);
 
             // Stuffing Export: (BGM+999 AND TRNTYP LIKE '2+%5') OR (BGM+36 AND TRNTYP LIKE '%9+5' AND P_BOOK_NO<> 'NOT PRESENT' AND upper(P_FILE_NAME) like '%RCL%')
-        } else if (("999".equals(gateType) && transactionType != null && "2+5".equals(transactionType)) || ("36".equals(gateType) && transactionType != null && transactionType.contains("9+5") && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
+        } else if (("999".equals(gateType) && StringUtils.isNotBlank(transactionType) && "2+5".equals(transactionType)) || ("36".equals(gateType) && StringUtils.isNotBlank(transactionType) && transactionType.contains("9+5") && !"NOT PRESENT".equals(bookingNo) && upperFileName.contains("RCL"))) {
             gateRecord.setStuffingExport(moveDateTime);
         }
     }
@@ -201,6 +212,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * This means: day(13,2) + month(11,2) + year(7,4) + time(15,4) = DDMMRRRRHHMI
      */
     private String extractMoveDate(String line, String fileName) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             // Remove "DTM+7:" prefix
             String dateStr = line.substring(6);
@@ -252,6 +266,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract container number from EQD+CN segment
      */
     private String extractContainerNo(String line) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             // Format: EQD+CN+CONTAINER_NO+...
             int firstPlus = line.indexOf('+', 4); // After "EQD+CN+"
@@ -282,16 +299,19 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract transaction type from EQD segment (last 3 characters)
      */
     private String extractTransactionType(String line) {
-        if (line.length() >= 3) {
-            return line.substring(line.length() - 3);
+        if (StringUtils.isBlank(line) || line.length() < 3) {
+            return null;
         }
-        return null;
+        return line.substring(line.length() - 3);
     }
 
     /**
      * Extract booking number from RFF+BN segment
      */
     private String extractBookingNo(String line) {
+        if (StringUtils.isBlank(line) || line.length() < 7) {
+            return "NOT PRESENT";
+        }
         try {
             // Format: RFF+BN:BOOKING_NO'
             String value = line.substring(7); // After "RFF+BN"
@@ -310,6 +330,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract line code from NAD+CF+ segment
      */
     private String extractLineCode(String line) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             // Format: NAD+CF+LINE_CODE:172:20'
             int firstPlus = line.indexOf('+', 4); // After "NAD+CF+"
@@ -335,6 +358,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract location code from LOC segment
      */
     private String extractLocationCode(String line) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             // Format: LOC+8+PORT_CODE:139:6' or LOC+11+PORT_CODE:139:6'
             int firstPlus = line.indexOf('+', 4); // After "LOC+X+"
@@ -363,6 +389,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract seal number from SEL segment
      */
     private String extractSealNo(String line) {
+        if (StringUtils.isBlank(line)) {
+            return "XXX";
+        }
         try {
             // Format: SEL+SEAL_NO+...
             int firstPlus = line.indexOf('+');
@@ -388,6 +417,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract weight from MEA segment
      */
     private String extractWeight(String line) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             // Format: MEA+AAE+G+:WEIGHT' or MEA+AAE+VGM+:WEIGHT'
             int lastPlus = line.lastIndexOf('+');
@@ -409,6 +441,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract title from NAD+CZ+ segment
      */
     private String extractTitle(String line) {
+        if (StringUtils.isBlank(line)) {
+            return null;
+        }
         try {
             // Format: NAD+CZ+TITLE'
             int firstPlus = line.indexOf('+', 4); // After "NAD+CZ+"
@@ -433,7 +468,7 @@ public class EdiParserServiceImpl implements EdiParserService {
      */
     private LocalDateTime parseEdiDateTime(String ediDateTime) {
         try {
-            if (ediDateTime != null && ediDateTime.length() >= 12) {
+            if (StringUtils.isNotBlank(ediDateTime) && ediDateTime.length() >= 12) {
                 return LocalDateTime.parse(ediDateTime, EDI_DATE_FORMAT);
             }
         } catch (Exception e) {
@@ -446,6 +481,9 @@ public class EdiParserServiceImpl implements EdiParserService {
      * Extract value from EDI segment, removing quotes and extra characters
      */
     private String extractValue(String segment) {
+        if (StringUtils.isBlank(segment)) {
+            return "";
+        }
         return segment.replace("'", "").split(":")[0];
     }
 }

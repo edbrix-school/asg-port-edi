@@ -25,6 +25,10 @@ public class EdiValidationUtils {
      * @throws IOException
      */
     public static boolean validateEdiFile(InputStream inputStream, String fileName) throws IOException {
+        if (inputStream == null) {
+            log.warn("Skipping EDI validation: null input stream");
+            return false;
+        }
         if (StringUtils.isBlank(fileName)) {
             log.warn("Skipping EDI file with null or empty filename");
             return false;
@@ -65,8 +69,7 @@ public class EdiValidationUtils {
      * @param fileName    File name for logging
      * @return ValidationResult with detailed validation information
      */
-    public static EdiFileValidator.ValidationResult validateEdiFileComprehensive(
-            InputStream inputStream, String fileName) {
+    public static EdiFileValidator.ValidationResult validateEdiFileComprehensive(InputStream inputStream, String fileName) {
         return EdiFileValidator.validateEdiFile(inputStream, fileName);
     }
 }
